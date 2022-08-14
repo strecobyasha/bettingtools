@@ -1,0 +1,54 @@
+version: '3'
+
+services:
+  database:
+    image: postgres:14.3
+    container_name: database
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+
+  app:
+    build: ./app
+    container_name: app
+    volumes:
+      - static:/var/www/static
+      - media:/var/www/media
+    expose:
+      - "8000"
+    depends_on:
+      - database
+    env_file:
+      - .env
+
+  nginx:
+    build: ./nginx
+    container_name: nginx
+    volumes:
+      - static:/var/www/static
+      - media:/var/www/media
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+    restart: always
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - ${REDIS_PORT}:${REDIS_PORT}
+    volumes:
+      - redis-data:/data
+    env_file:
+      - .env
+
+volumes:
+  postgres:
+  static:
+  media:
+  redis-data:
