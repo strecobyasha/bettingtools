@@ -29,7 +29,7 @@ class DataBaseManager:
         ).select_related('home_team', 'away_team', 'tournament')
 
     def prepare_data(self, games_to_update: QuerySet, predictions_dict: dict) -> None:
-        for game in games_to_update:
+        for game in games_to_update.iterator():
             game_data = GameModel(**game.__dict__)
             tour_data = TourModel(**game.tournament.__dict__)
             home_team_data = TeamModel(**game.home_team.__dict__)

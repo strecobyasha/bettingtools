@@ -15,7 +15,7 @@ class TeamsManager:
 
     def collect_teams(self, finished_games: QuerySet) -> list:
         teams_to_update = []
-        for game in finished_games:
+        for game in finished_games.iterator():
             home_team = game.home_team
             away_team = game.away_team
             # If team ratings were not updated yet.

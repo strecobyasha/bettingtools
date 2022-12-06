@@ -18,6 +18,7 @@ from camp.preview.predictor import Predictor
 path = Path(__file__).resolve().parent.parent
 model_address = ''.join([str(path), '/academy/base_model.h5'])
 
+
 def updater():
     model = tf.keras.models.load_model(model_address)
 

@@ -20,6 +20,7 @@ DETAILS_DELTA_TOP = 7
 PUB_DATE_NORM = 56
 PUB_DATE_MIN = 2
 
+
 class GameDetailsUpdater:
 
     def __init__(

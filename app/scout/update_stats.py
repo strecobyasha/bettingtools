@@ -16,7 +16,7 @@ class StatsUpdater(GameDetailsUpdater):
 
     def update_details(self, games_to_update: QuerySet, games_stats: dict) -> None:
         # Prepare events data and update games in the DB.
-        for game in games_to_update:
+        for game in games_to_update.iterator():
             stats = games_stats[game.api_game_id]
             home_team_id = game.home_team.api_team_id
             n = 1 if home_team_id == stats[1]['team']['id'] else 0

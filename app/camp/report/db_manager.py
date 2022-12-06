@@ -31,7 +31,7 @@ class DataBaseManager:
         ).select_related('home_team', 'away_team')
 
     def prepare_data(self, games_to_update: QuerySet) -> None:
-        for game in games_to_update:
+        for game in games_to_update.iterator():
             home_team_data = TeamModel(**game.home_team.__dict__)
             away_team_data = TeamModel(**game.away_team.__dict__)
             home_team_stats = game.home_team_stats

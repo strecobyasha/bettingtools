@@ -23,6 +23,7 @@ load_dotenv(''.join([str(path), '/config/.env']))
 SCORES_DELTA_BOTTOM = 7
 SCORES_DELTA_TOP = 7
 
+
 class Parser(ABC):
 
     def __init__(self, url_tail: str):

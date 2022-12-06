@@ -16,7 +16,7 @@ class EventsUpdater(GameDetailsUpdater):
 
     def update_details(self, games_to_update: QuerySet, games_events: dict) -> None:
         # Prepare events data and update games in the DB.
-        for game in games_to_update:
+        for game in games_to_update.iterator():
             events = self.prepare_game_events(games_events[game.api_game_id])
             game.game_events = events
 

@@ -18,7 +18,7 @@ class OddsUpdater(GameDetailsUpdater):
 
     def update_details(self, games_to_update: QuerySet, games_odds: dict) -> None:
         # Prepare events data and update games in the DB.
-        for game in games_to_update:
+        for game in games_to_update.iterator():
             api_odds = self.prepare_odds(games_odds[game.api_game_id])
             odds = self.combine_odds(game.game_odds, api_odds)
             if 'Match Winner' in odds:

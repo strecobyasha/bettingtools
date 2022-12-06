@@ -16,7 +16,7 @@ class LineupsUpdater(GameDetailsUpdater):
 
     def update_details(self, games_to_update: QuerySet, games_lineups: dict) -> None:
         # Prepare lineups and update games in the DB.
-        for game in games_to_update:
+        for game in games_to_update.iterator():
             lineups = self.prepare_lineups(games_lineups[game.api_game_id])
             game.lineups = lineups
 
