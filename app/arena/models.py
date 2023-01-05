@@ -1,9 +1,15 @@
 import uuid
 
+from datetime import datetime
 from django.db import models
+from django.db.models import F, Q, Sum, QuerySet
+from django.db.models.fields.json import KeyTextTransform
 from django.template.defaultfilters import slugify
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from pytz import timezone
+
+from camp.preview.last_games import average_stats, collects_stats
 
 
 class UUIDMixin(models.Model):
@@ -68,9 +74,98 @@ class Team(UUIDMixin):
         self.slug = slugify('-'.join([str(self.api_team_id), self.name]))
         super().save(*args, **kwargs)
 
+    def get_team_stats(obj, latest_games: QuerySet) -> dict:
+        team_stats = {
+            'team_total_stats': {},
+            'opponents_total_stats': {},
+        }
+        for game in latest_games:
+            if game.home_team_stats and game.away_team_stats:
+                if obj == game.home_team:
+                    team_stats['team_total_stats'] = collects_stats(
+                        team_stats['team_total_stats'], game.home_team_stats
+                    )
+                    team_stats['opponents_total_stats'] = collects_stats(
+                        team_stats['opponents_total_stats'], game.away_team_stats
+                    )
+                else:
+                    team_stats['team_total_stats'] = collects_stats(
+                        team_stats['team_total_stats'], game.away_team_stats
+                    )
+                    team_stats['opponents_total_stats'] = collects_stats(
+                        team_stats['opponents_total_stats'], game.home_team_stats
+                    )
+        team_stats['team_total_stats'] = average_stats(team_stats['team_total_stats'])
+        team_stats['opponents_total_stats'] = average_stats(team_stats['opponents_total_stats'])
+
+        return team_stats
+
     class Meta:
         db_table = 'content\".\"team'
         ordering = ['short_name']
+
+
+class GameManager(models.Manager):
+
+    def get_next_games(self, now: datetime) -> QuerySet:
+        return self.filter(
+                status='Not Started',
+                pub_date__lte=now
+            ).annotate(
+                outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
+            ).order_by('game_date')[:5].select_related('home_team', 'away_team')
+
+    def get_main_games(self, now: datetime) -> QuerySet:
+        return self.filter(
+                status='Not Started',
+                pub_date__lte=now,
+            ).annotate(
+                game_rating=Sum(
+                    F('home_team_defence') + F('away_team_defence') + F('home_team_attack') + F('away_team_attack')
+                ),
+                outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
+            ).order_by(
+                '-game_rating'
+            )[:5].select_related('home_team', 'away_team')
+
+    def get_latest_predictions(self, now: datetime) -> QuerySet:
+        return self.filter(
+                pub_date__lte=now,
+            ).order_by('-pub_date')[:5].select_related('home_team', 'away_team', 'tournament')
+
+    def get_latest_results(self) -> QuerySet:
+        return self.filter(
+                status='Match Finished',
+            ).order_by('-game_date')[:5].select_related('home_team', 'away_team', 'tournament')
+
+    def get_predictions_list(self, filter: dict, team_filter: Q) -> QuerySet:
+        return self.filter(team_filter).filter(**filter).annotate(
+                outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
+            ).order_by('-pub_date').select_related('home_team', 'away_team')
+
+    def get_scores(self, user_timezone: str, target_time: datetime) -> QuerySet:
+        return self.filter(
+                game_date__gte=timezone(user_timezone).localize(datetime.combine(target_time, target_time.min.time())),
+                game_date__lte=timezone(user_timezone).localize(datetime.combine(target_time, target_time.max.time())),
+            ).order_by('tournament__pseudonym', 'game_date').select_related('tournament')
+
+    def get_standings_next_games(self, obj: Tournament) -> QuerySet:
+        return self.filter(
+                tournament=obj,
+                status__in=['Not Started', 'First Half', 'Halftime', 'Second Half', 'Time to be defined'],
+            ).order_by('game_date')[:20]
+
+    def get_standings_latest_games(self, obj: Tournament) -> QuerySet:
+        return self.filter(tournament=obj, status='Match Finished').order_by('game_date')[:20]
+
+    def get_team_next_games(self, team: Team, now: datetime) -> QuerySet:
+        return self.filter(Q(home_team=team)|Q(away_team=team), game_date__gte=now,
+            ).order_by('game_date')[:3].select_related('home_team', 'away_team', 'tournament')
+
+    def get_team_latest_games(self, team: Team) -> QuerySet:
+        return self.filter(Q(home_team=team)|Q(away_team=team), status='Match Finished',
+            ).order_by('-game_date')[:10].select_related('home_team', 'away_team', 'tournament',
+            ).annotate(outcome_odds=KeyTextTransform('Match Winner', 'game_odds'))
 
 
 class Game(UUIDMixin):
@@ -120,6 +215,8 @@ class Game(UUIDMixin):
     home_team_last_tour_games = models.JSONField(blank=True, null=True)
     away_team_last_tour_games = models.JSONField(blank=True, null=True)
     slug = models.SlugField(max_length=100, blank=True, null=True, unique=True)
+
+    objects = GameManager()
 
     def get_absolute_url(self):
         return reverse('preview', args=[self.slug])

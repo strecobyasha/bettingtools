@@ -1,14 +1,12 @@
 from datetime import datetime, timedelta
 
 import django.utils.timezone
-from django.db.models import F, Q, Sum
-from django.db.models.fields.json import KeyTextTransform
+from django.db.models import Q
 from django.shortcuts import render
 from django.views.generic import DetailView, ListView, TemplateView
 from pytz import timezone
 
 from arena.models import Game, Team, Tournament
-from camp.preview.last_games import average_stats, collects_stats
 
 
 class IndexView(TemplateView):
@@ -20,32 +18,10 @@ class IndexView(TemplateView):
         context = super(IndexView, self).get_context_data(**kwargs)
         context['user_timezone'] = user_timezone
 
-        next_games = Game.objects.filter(
-            status='Not Started',
-            pub_date__lte=now
-        ).annotate(
-            outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
-        ).order_by('game_date')[:5].select_related('home_team', 'away_team')
-
-        main_games = Game.objects.filter(
-            status='Not Started',
-            pub_date__lte=now,
-        ).annotate(
-            game_rating=Sum(
-                F('home_team_defence') + F('away_team_defence') + F('home_team_attack') + F('away_team_attack')
-            ),
-            outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
-        ).order_by(
-            '-game_rating'
-        )[:5].select_related('home_team', 'away_team')
-
-        latest_predictions = Game.objects.filter(
-            pub_date__lte=now,
-        ).order_by('-pub_date')[:5].select_related('home_team', 'away_team', 'tournament')
-
-        latest_results = Game.objects.filter(
-            status='Match Finished',
-        ).order_by('-game_date')[:5].select_related('home_team', 'away_team', 'tournament')
+        next_games = Game.objects.get_next_games(now=now)
+        main_games = Game.objects.get_main_games(now=now)
+        latest_predictions = Game.objects.get_latest_predictions(now=now)
+        latest_results = Game.objects.get_latest_results()
 
         context.update(
             {
@@ -67,13 +43,11 @@ class PredictionsView(ListView):
         user_timezone = self.request.session.get('timezone', 'utc')
         now = set_timezone(user_timezone)
         filter = {'pub_date__lte': now}
+        team_filter = Q()
 
         if self.request.GET.get('team'):
             team = self.request.GET.get('team')
             team_filter = Q(home_team__slug=team) | Q(away_team__slug=team)
-            return Game.objects.filter(team_filter).filter(**filter).annotate(
-                outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
-            ).order_by('-pub_date').select_related('home_team', 'away_team')
 
         elif self.request.GET.get('league'):
             league = self.request.GET.get('league')
@@ -93,9 +67,7 @@ class PredictionsView(ListView):
                 'game_date__lte': datetime.combine(filter_date, filter_date.max.time()).astimezone(),
             })
 
-        return Game.objects.filter(**filter).annotate(
-            outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
-        ).order_by('-pub_date').select_related('home_team', 'away_team')
+        return Game.objects.get_predictions_list(filter=filter, team_filter=team_filter)
 
 
 class PreviewView(DetailView):
@@ -123,10 +95,7 @@ class ScoresView(ListView):
         now = set_timezone(user_timezone)
         target_time = now + timedelta(days=offset)
 
-        return Game.objects.filter(
-            game_date__gte=timezone(user_timezone).localize(datetime.combine(target_time, target_time.min.time())),
-            game_date__lte=timezone(user_timezone).localize(datetime.combine(target_time, target_time.max.time())),
-        ).order_by('tournament__pseudonym', 'game_date').select_related('tournament')
+        return Game.objects.get_scores(user_timezone=user_timezone, target_time=target_time)
 
 
 class StandingsView(DetailView):
@@ -137,14 +106,8 @@ class StandingsView(DetailView):
         user_timezone = self.request.session.get('timezone', 'utc')
         set_timezone(user_timezone)
         context = super(StandingsView, self).get_context_data(**kwargs)
-        context['next_games'] = Game.objects.filter(
-            tournament=context['object'],
-            status__in=['Not Started', 'First Half', 'Halftime', 'Second Half', 'Time to be defined'],
-        ).order_by('game_date')[:20]
-        context['latest_games'] = Game.objects.filter(
-            tournament=context['object'],
-            status='Match Finished'
-        ).order_by('-game_date')[:20]
+        context['next_games'] = Game.objects.get_standings_next_games(obj=context['object'])
+        context['latest_games'] = Game.objects.get_standings_latest_games(obj=context['object'])
         context['stats'] = 'stats_all'
         if self.request.GET.get('stats') == 'home':
             context['stats'] = 'stats_home'
@@ -184,48 +147,10 @@ class TeamView(DetailView):
         now = set_timezone(user_timezone)
         context = super(TeamView, self).get_context_data(**kwargs)
 
-        context['next_games'] = Game.objects.filter(
-            Q(home_team=self.object)|Q(away_team=self.object),
-            game_date__gte=now,
-        ).order_by('game_date')[:3].select_related('home_team', 'away_team', 'tournament')
-
-        latest_games = Game.objects.filter(
-            Q(home_team=self.object)|Q(away_team=self.object),
-            status='Match Finished',
-        ).order_by(
-            '-game_date'
-        )[:10].select_related(
-            'home_team', 'away_team', 'tournament'
-        ).annotate(
-            outcome_odds=KeyTextTransform('Match Winner', 'game_odds')
-        )
-
+        context['next_games'] = Game.objects.get_team_next_games(team=self.object, now=now)
+        latest_games = Game.objects.get_team_latest_games(team=self.object)
         context['latest_games'] = latest_games
-
-        team_stats = {
-            'team_total_stats': {},
-            'opponents_total_stats': {},
-        }
-        for game in latest_games:
-            if game.home_team_stats and game.away_team_stats:
-                if self.object == game.home_team:
-                    team_stats['team_total_stats'] = collects_stats(
-                        team_stats['team_total_stats'], game.home_team_stats
-                    )
-                    team_stats['opponents_total_stats'] = collects_stats(
-                        team_stats['opponents_total_stats'], game.away_team_stats
-                    )
-                else:
-                    team_stats['team_total_stats'] = collects_stats(
-                        team_stats['team_total_stats'], game.away_team_stats
-                    )
-                    team_stats['opponents_total_stats'] = collects_stats(
-                        team_stats['opponents_total_stats'], game.home_team_stats
-                    )
-        team_stats['team_total_stats'] = average_stats(team_stats['team_total_stats'])
-        team_stats['opponents_total_stats'] = average_stats(team_stats['opponents_total_stats'])
-
-        context['team_stats'] = team_stats
+        context['team_stats'] = Team.get_team_stats(obj=self.object, latest_games=latest_games)
 
         return context
 
